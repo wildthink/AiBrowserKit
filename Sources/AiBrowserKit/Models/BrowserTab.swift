@@ -2,6 +2,15 @@
 import Foundation
 import WebKit
 
+/// Which device rendition a tab requests from the page — affects both the reported
+/// user agent and WebKit's own content-mode negotiation, which sites can key off
+/// independently of the UA string. Change together via `setDeviceMode(_:)`, not by
+/// setting `webView.customUserAgent` directly, or the two can disagree.
+public enum DeviceMode: String, Sendable {
+    case desktop
+    case mobile
+}
+
 /// Model for a single browser tab.
 @MainActor
 @Observable
@@ -15,6 +24,11 @@ public final class BrowserTab: Identifiable {
 
     /// True until the user navigates — used to show the new tab landing page.
     public var isBlank: Bool = true
+
+    /// Device rendition this tab currently requests. Defaults to `.desktop`, which means
+    /// `customUserAgent` is left `nil` — WKWebView's own real UA — rather than a forced
+    /// constant.
+    public var deviceMode: DeviceMode = .desktop
 
     /// User-facing tab title derived from the current page.
     public var title: String { state.pageTitle.isEmpty ? "New Tab" : state.pageTitle }
@@ -65,6 +79,24 @@ public final class BrowserTab: Identifiable {
     /// Applies the selected appearance override to the web view and reloads.
     public func applyTheme() {
         webView.appearance = state.themeOverride.nsAppearance
+        webView.reload()
+    }
+
+    /// Switches this tab's requested device rendition and reloads to apply it.
+    ///
+    /// Sets `customUserAgent` and `preferredContentMode` together, since sites can key off
+    /// either independently — changing only one gives an inconsistent (and easier to detect
+    /// as spoofed) combination.
+    public func setDeviceMode(_ mode: DeviceMode) {
+        deviceMode = mode
+        switch mode {
+        case .desktop:
+            webView.customUserAgent = nil
+            webView.configuration.defaultWebpagePreferences.preferredContentMode = .desktop
+        case .mobile:
+            webView.customUserAgent = WebViewStore.iPhoneUserAgent
+            webView.configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        }
         webView.reload()
     }
 }

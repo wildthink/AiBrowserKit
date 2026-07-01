@@ -133,12 +133,32 @@ public enum WebViewStore {
     public static let dataStore = WKWebsiteDataStore.default()
 
     #if canImport(AppKit)
-    /// Matches Safari on macOS 15.5.
+    /// Matches Safari on macOS 15.5. No longer applied by default (see
+    /// `WebViewFactory.makeWebView`) — a hand-maintained UA string drifts out of date and can
+    /// misrepresent the actual CPU architecture (this one claims Intel on Apple Silicon
+    /// hardware), which is itself a signal bot-detection services check for. Kept only for
+    /// `BrowserTab.setDeviceMode(.desktop)`, which explicitly wants a *forced* value distinct
+    /// from `customUserAgent == nil` (WKWebView's own, always-accurate default).
     public static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15"
+    /// Used by `BrowserTab.setDeviceMode(.mobile)` to preview a page's phone rendition from
+    /// a macOS host. There's no built-in equivalent on macOS (unlike an iOS build of this
+    /// package, which already reports a real iPhone UA natively).
+    public static let iPhoneUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
     #else
     /// Matches Safari on iOS 18.5.
     public static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
     #endif
+
+    /// Injects `StealthScript` into every page when `true`. Defaults to `false`: overriding
+    /// `navigator.webdriver`, WebGL vendor strings, canvas readback, and similar signals is
+    /// itself a well-known automation-toolkit fingerprint that bot-management services (e.g.
+    /// Cloudflare) actively check for — several of the script's overrides replace native
+    /// functions with JS closures without also patching `Function.prototype.toString`, so
+    /// `navigator.permissions.query.toString()` no longer reports `[native code]` the way a
+    /// real, untouched browser does. A plain, unmodified WKWebView reads as more "normal" to
+    /// these services than one running this script. Opt in only if you have a specific reason
+    /// (e.g. scraping a site that fingerprints WKWebView itself) to accept that trade-off.
+    public static var stealthModeEnabled: Bool = false
 
     /// Creates the canonical WebKit configuration for AiBrowserKit web views.
     ///
@@ -178,6 +198,23 @@ public struct WebViewRepresentable: NSViewRepresentable {
     public func makeNSView(context: Context) -> WKWebView { webView }
     /// No-op update; state is driven directly by the shared `WKWebView`.
     public func updateNSView(_ nsView: WKWebView, context: Context) {}
+
+    /// Forces this view to exactly the size SwiftUI proposes, instead of falling back to
+    /// `WKWebView`'s own intrinsic/fitting size.
+    ///
+    /// `WKWebView` hosts a deep internal AppKit/Auto Layout hierarchy (content view, scroll
+    /// view, and — with `isElementFullscreenEnabled` on — its own fullscreen presentation
+    /// machinery), any of which can assert a size preference of its own. Without this
+    /// override, SwiftUI may consult that preference when computing this view's size, and a
+    /// host that doesn't clip aggressively (an `NSSplitView`-backed container, for instance)
+    /// can end up growing to accommodate it — visible as the enclosing window repeatedly
+    /// resizing/widening on its own. Returning the proposal verbatim makes this view starve
+    /// any such upstream size assertion at the source, without disabling fullscreen support.
+    public func sizeThatFits(
+        _ proposal: ProposedViewSize, nsView: WKWebView, context: Context
+    ) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
 }
 #else
 /// SwiftUI bridge for embedding a `WKWebView` on UIKit platforms.
@@ -196,6 +233,13 @@ public struct WebViewRepresentable: UIViewRepresentable {
     public func makeUIView(context: Context) -> WKWebView { webView }
     /// No-op update; state is driven directly by the shared `WKWebView`.
     public func updateUIView(_ uiView: WKWebView, context: Context) {}
+
+    /// See the AppKit `sizeThatFits` override above — same rationale, same fix.
+    public func sizeThatFits(
+        _ proposal: ProposedViewSize, uiView: WKWebView, context: Context
+    ) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
 }
 #endif
 
@@ -231,12 +275,14 @@ public enum WebViewFactory {
 
         let coordinator = WebViewCoordinator(state: state, consoleStore: consoleStore)
 
-        let stealthScript = WKUserScript(
-            source: StealthScript.source,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        config.userContentController.addUserScript(stealthScript)
+        if WebViewStore.stealthModeEnabled {
+            let stealthScript = WKUserScript(
+                source: StealthScript.source,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+            config.userContentController.addUserScript(stealthScript)
+        }
 
         if consoleStore != nil {
             let script = WKUserScript(source: consoleInterceptScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -245,7 +291,10 @@ public enum WebViewFactory {
         }
 
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.customUserAgent = WebViewStore.userAgent
+        // No customUserAgent assignment here: leaving it nil means WKWebView reports its own
+        // real, always-accurate UA (correct OS version and CPU architecture) rather than a
+        // hand-maintained constant that can drift out of date. See setDeviceMode(_:) for
+        // explicit UA overrides (device-mode preview).
         webView.allowsBackForwardNavigationGestures = true
         #if canImport(AppKit)
         webView.allowsMagnification = true
