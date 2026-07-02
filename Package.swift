@@ -6,12 +6,19 @@ let package = Package(
     platforms: [.macOS("26.0"), .iOS(.v17), .visionOS(.v1)],
     products: [
         .library(name: "AiBrowserKit", targets: ["AiBrowserKit"]),
+        // Browser-agnostic UI controls (SFSymbolPicker), usable without the browser stack.
+        .library(name: "AiBrowserKitUI", targets: ["AiBrowserKitUI"]),
     ],
     dependencies: [],
     targets: [
         .target(
-            name: "AiBrowserKit",
+            name: "AiBrowserKitUI",
             dependencies: [],
+            path: "Sources/AiBrowserKitUI"
+        ),
+        .target(
+            name: "AiBrowserKit",
+            dependencies: ["AiBrowserKitUI"],
             path: "Sources/AiBrowserKit"
         ),
         .testTarget(
