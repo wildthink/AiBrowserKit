@@ -53,6 +53,15 @@ public final class BrowserEnvironment {
     /// should be added to the app-wide clipboard store.
     public var onAddToClipboard: ((AiBrowserClipboardContent) -> Void)? = nil
 
+    /// Optional host-app hook intercepting the navigation bar's bookmark star.
+    /// Return `true` to consume the toggle (the built-in `BookmarkService` is skipped),
+    /// `false` to fall through to the default bookmarks.jsonl behavior.
+    public var onToggleBookmark: ((_ title: String, _ url: URL) -> Bool)? = nil
+
+    /// Optional host-app hook overriding the star's filled state. When set, it fully
+    /// replaces the `BookmarkService` lookup — pair it with `onToggleBookmark`.
+    public var isBookmarkedOverride: ((URL?) -> Bool)? = nil
+
     /// Creates the browser environment and wires all shared services.
     ///
     /// - Parameter storageDirectory: Optional base directory for persisted data.

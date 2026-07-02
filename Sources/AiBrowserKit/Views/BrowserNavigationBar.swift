@@ -45,7 +45,10 @@ public struct BrowserNavigationBar: View {
     }
 
     private var isBookmarked: Bool {
-        browserEnv.bookmarks.isBookmarked(url: tab.state.currentURL)
+        if let override = browserEnv.isBookmarkedOverride {
+            return override(tab.state.currentURL)
+        }
+        return browserEnv.bookmarks.isBookmarked(url: tab.state.currentURL)
     }
 
     /// Renders navigation controls, address field, and page action buttons.
@@ -95,12 +98,21 @@ public struct BrowserNavigationBar: View {
 
                 if tab.state.currentURL != nil {
                     Button {
-                        browserEnv.bookmarks.toggleBookmark(
-                            title: tab.state.pageTitle.isEmpty
-                                ? (tab.state.currentURL?.host() ?? "Bookmark")
-                                : tab.state.pageTitle,
-                            url: tab.state.currentURL
-                        )
+                        let title = tab.state.pageTitle.isEmpty
+                            ? (tab.state.currentURL?.host() ?? "Bookmark")
+                            : tab.state.pageTitle
+                        // Host apps may claim the star for their own store (returns true);
+                        // otherwise fall through to the built-in bookmarks.jsonl.
+                        if let url = tab.state.currentURL,
+                           browserEnv.onToggleBookmark?(title, url) == true
+                        {
+                            // consumed by host
+                        } else {
+                            browserEnv.bookmarks.toggleBookmark(
+                                title: title,
+                                url: tab.state.currentURL
+                            )
+                        }
                     } label: {
                         Image(systemName: isBookmarked ? "star.fill" : "star")
                             .font(.system(size: 12, weight: .medium))
